@@ -1,1 +1,1 @@
-# Snowflake_Schemawide_Bulk_Ingestion_Tool
+# Snowflake_Schemawide_Smart_Automated_Bulk_Ingestion_Tool
