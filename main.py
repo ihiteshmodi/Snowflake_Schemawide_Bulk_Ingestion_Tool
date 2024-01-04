@@ -117,15 +117,17 @@ class Local_to_snowflake:
             self.sftable = pd.read_sql(self.readtablequery, con = self.engine)
             print("Converting all the columns in snowflake table to uppercase")
             self.sftable.columns = [x.upper() for x in self.sftable.columns]
+            self.table_not_exists = 0
             print(" ")
             return self
         
         except:
             print(f"Table Not Found, Creating table with name {self.snowflake_table_name} and Ingesting data")
-            self.prepare_and_ingest_final_dataset()
+            self.table_not_exists = 1
 
         finally:
             self.detect_csvfile_encoding()
+
 
     def detect_csvfile_encoding(self):
         try:
@@ -247,18 +249,21 @@ class Local_to_snowflake:
 
     def check_for_additional_columns(self):
         try:
-            print("Checking if any additional columns are present in ")
-            local_file_columns = set(self.df.columns)
-            snowflake_table_columns = set(self.sftable.columns)
-            self.additional_columns = local_file_columns - snowflake_table_columns
-            if len(self.additional_columns) > 0:
-                print(f"{len(self.additional_columns)} Additonal Columns Found")
-                print(self.additional_columns)
-                print(" ")
+            if self.table_not_exists == 1:
+                pass
             else:
-                print("No Additional Columns Found")
-                print(" ")
-            return self
+                print("Checking if any additional columns are present in ")
+                local_file_columns = set(self.df.columns)
+                snowflake_table_columns = set(self.sftable.columns)
+                self.additional_columns = local_file_columns - snowflake_table_columns
+                if len(self.additional_columns) > 0:
+                    print(f"{len(self.additional_columns)} Additonal Columns Found")
+                    print(self.additional_columns)
+                    print(" ")
+                else:
+                    print("No Additional Columns Found")
+                    print(" ")
+                return self
         except Exception as E:
             print(E)
 
@@ -278,10 +283,18 @@ class Local_to_snowflake:
                     print("Altering the snowflake table to add additional Columns using the Query :")
 
                     starting_sql_statement = f"ALTER TABLE IF EXISTS {self.snowflake_table_name} ADD COLUMN"
-                    for i in self.additional_columns:
-                        starting_sql_statement = starting_sql_statement + f' "{i}" {self.output_data_type},'
 
-                    starting_sql_statement = starting_sql_statement[:-1]   #A comma would have come in the end as well, We will remove it
+                    if self.output_data_type == "Auto":
+                        for i in self.additional_columns:
+                            starting_sql_statement = starting_sql_statement + f' "{i}",'
+
+                        starting_sql_statement = starting_sql_statement[:-1]   #A comma would have come in the end as well, We will remove it
+
+                    else:
+                        for i in self.additional_columns:
+                            starting_sql_statement = starting_sql_statement + f' "{i}" {self.output_data_type},'
+
+                        starting_sql_statement = starting_sql_statement[:-1]   #A comma would have come in the end as well, We will remove it
 
                     print(starting_sql_statement)
                     self.cur.execute(starting_sql_statement)
@@ -339,23 +352,26 @@ class Local_to_snowflake:
 
     def perform_rip_and_replace(self):
         try:
-            RIP_AND_REPLACE_sql_statement = f"DELETE FROM {self.snowflake_table_name} WHERE CONCAT("
-            for i in self.capital_hashkey_columns:
-                RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement + f'"{i}",'
+            if self.table_not_exists == 1:
+                pass
+            else:
+                RIP_AND_REPLACE_sql_statement = f"DELETE FROM {self.snowflake_table_name} WHERE CONCAT("
+                for i in self.capital_hashkey_columns:
+                    RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement + f'"{i}",'
 
-            RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement[:-1]           #A comma would have come in the end as well, We will remove it
-            RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement + ") IN ("     #Have to close the bracket as well :)
+                RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement[:-1]           #A comma would have come in the end as well, We will remove it
+                RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement + ") IN ("     #Have to close the bracket as well :)
 
-            for i in self.unique_ripandreplace_hashkeys:
-                RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement + f"'{i}',"
-            
-            RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement[:-1]           #A comma would have come in again so have to remove it
-            RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement + ")"          #Closing the brackets of the "IN" Clause
+                for i in self.unique_ripandreplace_hashkeys:
+                    RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement + f"'{i}',"
+                
+                RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement[:-1]           #A comma would have come in again so have to remove it
+                RIP_AND_REPLACE_sql_statement = RIP_AND_REPLACE_sql_statement + ")"          #Closing the brackets of the "IN" Clause
 
-            print(f"The delete statement that we will be executing to delete currently present records using the unique combinations columns {self.hashkey_columns} perform the RIP AND REPLACE is {RIP_AND_REPLACE_sql_statement}")
-            print(" ")
-            print(" ")
-            self.cur.execute(RIP_AND_REPLACE_sql_statement)
+                print(f"The delete statement that we will be executing to delete currently present records using the unique combinations columns {self.hashkey_columns} perform the RIP AND REPLACE is {RIP_AND_REPLACE_sql_statement}")
+                print(" ")
+                print(" ")
+                self.cur.execute(RIP_AND_REPLACE_sql_statement)
 
         except Exception as E:
             print(E)
@@ -370,7 +386,11 @@ class Local_to_snowflake:
 
         print("Creating the final dataset where all columns from the csv file get aligned with Snowflake table before we can append the data to the table")
         print(" ")
-        self.ingestion_df = pd.concat([self.sftable, self.df])
+
+        if self.table_not_exists == 1:
+            self.ingestion_df =  self.df.copy()
+        else:
+            self.ingestion_df = pd.concat([self.sftable, self.df])
 
         mode = "append"  #available options are "append, replace, and fail" replace will replace the entire table. fail is default
         self.ingestion_df.to_sql(self.snowflake_table_name, con = self.engine , index=False, if_exists = mode) # method=pd_writer removng this piece As iske bina nahi chalra tha
@@ -418,37 +438,42 @@ for i in range(len(config_df)):
     }
 
     snowflake_tablename_to_append_data_to = config_df["OUTPUT_TABLE_NAME"][i]
-    data_types_of_additonal_columns_if_detected = config_df["DATA_TYPES_OF_ADDITIONAL_COLUMNS"][i]
+    output_data_type = config_df["DATA_TYPES_OF_ADDITIONAL_COLUMNS"][i]
     does_the_csv_file_have_grandtotal_row = config_df["CSV_HAS_GRANDTOTAL_ROWS"][i]
+    add_additional_columns_to_snowflake = config_df["ADDITIONAL_COLUMNS_SHOULD_BE_ADDED_TO_SF_TABLE"][i]
     hashkey_columns_list = list(config_df["HASHKEY_COLUMNS"][i].split(","))
 
     input_folder_name = cwd + "\\" + "Input Files" + "\\" + config_df["OUTPUT_TABLE_NAME"][i]
 
     files_list = glob.glob(os.path.join(input_folder_name, "*.csv"))
+    
 
     for i in files_list:
-       local_csv_filepath = i
+        local_csv_filepath = i
 
-    #Assigning our class and its configs to a variable
-    floodlight_data_to_snowflake = Local_to_snowflake(connector_dict = connector_dict,
+        #Assigning our class and its configs to a variable
+        floodlight_data_to_snowflake = Local_to_snowflake(connector_dict = connector_dict,
                                                  snowflake_table_name = snowflake_tablename_to_append_data_to,
                                                  local_file_path = local_csv_filepath, 
-                                                 hashkey_columns = hashkey_columns_list)
-    
-    try:
-        #Executing the code
-        floodlight_data_to_snowflake.connect_to_snowflake()
+                                                 hashkey_columns = hashkey_columns_list,
+                                                 output_data_type = output_data_type,
+                                                 has_total_on_last_row = does_the_csv_file_have_grandtotal_row,
+                                                 add_additional_columns = add_additional_columns_to_snowflake)
+        
+        try:
+            #Executing the code
+            floodlight_data_to_snowflake.connect_to_snowflake()
 
-        print(f"Successfully ingested the file named : {i} now moving it to archive folder")
-        file_archive_path = archive_folder_path + "\\" + local_csv_filepath.split("\\")[-2] + "\\" +  local_csv_filepath.split("\\")[-1] #-2 will give us table name, -1 will give file name witrh .csv extension
-        file_archive_folder = archive_folder_path + "\\" + local_csv_filepath.split("\\")[-2] #-2 will give us table name we have to cretae a folder for files to be moved there!
-        if not os.path.exists(file_archive_folder):
-            os.makedirs(file_archive_folder)
+            print(f"Successfully ingested the file named : {i} now moving it to archive folder")
+            file_archive_path = archive_folder_path + "\\" + local_csv_filepath.split("\\")[-2] + "\\" +  local_csv_filepath.split("\\")[-1] #-2 will give us table name, -1 will give file name witrh .csv extension
+            file_archive_folder = archive_folder_path + "\\" + local_csv_filepath.split("\\")[-2] #-2 will give us table name we have to cretae a folder for files to be moved there!
+            if not os.path.exists(file_archive_folder):
+                os.makedirs(file_archive_folder)
 
-        os.rename(i, file_archive_path)
-        print("Dropped the file in Archive")
-    except Exception as E:
-        print(f"unable to ingest file {i}, Due to this error: {E}")
+            os.rename(i, file_archive_path)
+            print("Dropped the file in Archive")
+        except Exception as E:
+            print(f"unable to ingest file {i}, Due to this error: {E}")
 
 
 
