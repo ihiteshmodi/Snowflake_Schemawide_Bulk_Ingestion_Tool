@@ -1,0 +1,4 @@
+Dont leave spaces after commas
+in RIP and replace columns excel template
+
+2) The etch can ingest 16,000 rows per file only!
