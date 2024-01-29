@@ -26,6 +26,13 @@ class Local_to_snowflake:
         self.add_additional_columns = add_additional_columns
         self.hashkey_columns = list(hashkey_columns)
         self.capital_hashkey_columns = [x.upper() for x in hashkey_columns]
+        self.snowflake_data_types_mapping = {
+                                            'object': 'VARCHAR',
+                                            'int64': 'INTEGER',
+                                            'datetime64[ns]': 'DATETIME',
+                                            'float64' : 'NUMBER'
+                                            # Add more mappings as needed
+                                        }
 
         
 
@@ -71,37 +78,6 @@ class Local_to_snowflake:
         print(" ")
 
         self.read_snowflake_table_columns()
-
-
-    """ 
-    #Declaring this piece as legacy, as adding column is causing huge issues but directly running delete would be cool
-    def detect_hashkey_sftable(self):
-        try:
-            print(f"Checking to see if HASHKEY column is present in Snowflake Table {self.snowflake_table_name}")
-            self.readtablequery = f'''
-                    select HASHKEY
-                    from {self.snowflake_table_name}
-                    WHERE 1 = 0
-                    '''
-            self.cur.execute(self.readtablequery)
-            print(f"Column named HASHKEY has been found in the snowflake table{self.snowflake_table_name}")
-        except:
-            print(f"Hashkey not found in snowflake table{self.snowflake_table_name}, So we will create the column")
-            
-            starting_sql_statement = f"ALTER TABLE IF EXISTS {self.snowflake_table_name} ADD HASHKEY VARCHAR(500) AS CONCAT("
-            for i in self.hashkey_columns:
-                starting_sql_statement = starting_sql_statement + f'"{i}",'
-
-            starting_sql_statement = starting_sql_statement[:-1]   #A comma would have come in the end as well, We will remove it
-            starting_sql_statement = starting_sql_statement + ")"   #Have to close the bracket as well :)
-
-            print(starting_sql_statement)
-            self.cur.execute(starting_sql_statement)
-
-        finally:
-            self.read_snowflake_table_columns()
-
-        """
 
     def read_snowflake_table_columns(self):
         try:
@@ -230,8 +206,17 @@ class Local_to_snowflake:
 
     def capitalized_localfile_columns_and_remove_grandtotal_row(self):
         try:
-            self.df.columns = [x.upper() for x in self.df.columns]
-            print("Capitalizing all the columns")
+            def clean_column_name(column_name):
+                # Replace non-alphanumeric characters with underscores
+                cleaned_name = ''.join(char if char.isalnum() else '_' for char in column_name)
+                # Replace multiple underscores with a single underscore
+                cleaned_name = '_'.join(part for part in cleaned_name.split('_') if part)
+                # Convert to uppercase
+                cleaned_name = cleaned_name.upper()
+                return cleaned_name
+            
+            self.df.columns = [clean_column_name(col) for col in self.df.columns]
+            print("Converting all column names to standard names with capital letetrs and underscores in place of spaces and other characters")
 
             if self.has_total_on_last_row == "Yes":
                 print("File has grand total row as mentioned by Master so removing the last row from the dataset")
@@ -285,8 +270,14 @@ class Local_to_snowflake:
                     starting_sql_statement = f"ALTER TABLE IF EXISTS {self.snowflake_table_name} ADD COLUMN"
 
                     if self.output_data_type == "Auto":
+                            # Get column names and data types
+                        columns_info = self.df.dtypes.to_dict()
+                        # Convert the data types to string representation
+                        columns_info = {column: str(dtype) for column, dtype in columns_info.items()}
+                        snowflake_column_data_types = {column: self.snowflake_data_types_mapping.get(dtype, dtype) for column, dtype in columns_info.items()}
+
                         for i in self.additional_columns:
-                            starting_sql_statement = starting_sql_statement + f' "{i}",'
+                            starting_sql_statement = starting_sql_statement + f' "{i}" {snowflake_column_data_types[i]},'
 
                         starting_sql_statement = starting_sql_statement[:-1]   #A comma would have come in the end as well, We will remove it
 
@@ -346,9 +337,7 @@ class Local_to_snowflake:
             if self.go_ahead == "Y":
                 self.perform_rip_and_replace()
             else:
-                self.cur.close()
-                self.connection.close()
-                print("Closed the snowflake connections")
+                pass
 
     def perform_rip_and_replace(self):
         try:
